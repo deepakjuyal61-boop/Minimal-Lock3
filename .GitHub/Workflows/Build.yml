@@ -1,0 +1,470 @@
+name: Build Minimal Lock APK
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.5'
+      - name: Create project files
+        run: |
+          cat > settings.gradle <<'__END_OF_FILE__'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "MinimalLock"
+          include ':app'
+          __END_OF_FILE__
+          cat > build.gradle <<'__END_OF_FILE__'
+          plugins {
+              id 'com.android.application' version '8.2.2' apply false
+              id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
+          }
+          __END_OF_FILE__
+          cat > gradle.properties <<'__END_OF_FILE__'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          __END_OF_FILE__
+          mkdir -p app
+          cat > app/build.gradle <<'__END_OF_FILE__'
+          plugins {
+              id 'com.android.application'
+              id 'org.jetbrains.kotlin.android'
+          }
+
+          android {
+              namespace 'com.minimal.lock'
+              compileSdk 34
+
+              defaultConfig {
+                  applicationId "com.minimal.lock"
+                  minSdk 21
+                  targetSdk 33
+                  versionCode 1
+                  versionName "1.0"
+              }
+
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                  }
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_1_8
+                  targetCompatibility JavaVersion.VERSION_1_8
+              }
+              kotlinOptions {
+                  jvmTarget = '1.8'
+              }
+          }
+          __END_OF_FILE__
+          mkdir -p app/src/main
+          cat > app/src/main/AndroidManifest.xml <<'__END_OF_FILE__'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              xmlns:tools="http://schemas.android.com/tools">
+
+              <!-- Needed for real screen time. The user grants it in Settings > Usage access. -->
+              <uses-permission
+                  android:name="android.permission.PACKAGE_USAGE_STATS"
+                  tools:ignore="ProtectedPermissions" />
+
+              <uses-feature
+                  android:name="android.software.live_wallpaper"
+                  android:required="true" />
+
+              <application
+                  android:allowBackup="true"
+                  android:label="@string/app_name">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:theme="@android:style/Theme.Material.NoActionBar">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+                  <service
+                      android:name=".MinimalLockService"
+                      android:exported="true"
+                      android:label="@string/app_name"
+                      android:permission="android.permission.BIND_WALLPAPER">
+                      <intent-filter>
+                          <action android:name="android.service.wallpaper.WallpaperService" />
+                      </intent-filter>
+                      <meta-data
+                          android:name="android.service.wallpaper"
+                          android:resource="@xml/wallpaper" />
+                  </service>
+              </application>
+          </manifest>
+          __END_OF_FILE__
+          mkdir -p app/src/main/res/xml
+          cat > app/src/main/res/xml/wallpaper.xml <<'__END_OF_FILE__'
+          <?xml version="1.0" encoding="utf-8"?>
+          <wallpaper xmlns:android="http://schemas.android.com/apk/res/android" />
+          __END_OF_FILE__
+          mkdir -p app/src/main/res/values
+          cat > app/src/main/res/values/strings.xml <<'__END_OF_FILE__'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">Minimal Lock</string>
+          </resources>
+          __END_OF_FILE__
+          mkdir -p app/src/main/java/com/minimal/lock
+          cat > app/src/main/java/com/minimal/lock/MainActivity.kt <<'__END_OF_FILE__'
+          package com.minimal.lock
+
+          import android.app.Activity
+          import android.app.WallpaperManager
+          import android.content.ComponentName
+          import android.content.Intent
+          import android.graphics.Color
+          import android.os.Bundle
+          import android.provider.Settings
+          import android.view.Gravity
+          import android.widget.Button
+          import android.widget.LinearLayout
+          import android.widget.TextView
+
+          class MainActivity : Activity() {
+
+              private lateinit var status: TextView
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+
+                  val pad = (24 * resources.displayMetrics.density).toInt()
+                  val root = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setBackgroundColor(Color.BLACK)
+                      setPadding(pad, pad * 2, pad, pad)
+                      gravity = Gravity.TOP
+                  }
+
+                  root.addView(TextView(this).apply {
+                      text = "Minimal Lock"
+                      setTextColor(Color.WHITE)
+                      textSize = 28f
+                  })
+
+                  status = TextView(this).apply {
+                      setTextColor(Color.LTGRAY)
+                      textSize = 15f
+                      setPadding(0, pad / 2, 0, pad)
+                  }
+                  root.addView(status)
+
+                  root.addView(Button(this).apply {
+                      text = "1. Allow usage access (for screen time)"
+                      setOnClickListener {
+                          startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                      }
+                  })
+
+                  root.addView(Button(this).apply {
+                      text = "2. Set as wallpaper"
+                      setOnClickListener { openWallpaperPreview() }
+                  })
+
+                  setContentView(root)
+              }
+
+              override fun onResume() {
+                  super.onResume()
+                  status.text = if (ScreenTime.hasPermission(this))
+                      "Usage access: allowed. Screen time will show on the lock screen."
+                  else
+                      "Usage access: not allowed yet. Screen time will stay hidden until you allow it."
+              }
+
+              private fun openWallpaperPreview() {
+                  try {
+                      val i = Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER)
+                      i.putExtra(
+                          WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT,
+                          ComponentName(this, MinimalLockService::class.java)
+                      )
+                      startActivity(i)
+                  } catch (e: Exception) {
+                      startActivity(Intent(WallpaperManager.ACTION_LIVE_WALLPAPER_CHOOSER))
+                  }
+              }
+          }
+          __END_OF_FILE__
+          mkdir -p app/src/main/java/com/minimal/lock
+          cat > app/src/main/java/com/minimal/lock/ScreenTime.kt <<'__END_OF_FILE__'
+          package com.minimal.lock
+
+          import android.app.AppOpsManager
+          import android.app.usage.UsageEvents
+          import android.app.usage.UsageStatsManager
+          import android.content.Context
+          import android.content.Intent
+          import android.os.Build
+          import android.os.Process
+          import java.util.Calendar
+
+          object ScreenTime {
+
+              private const val EVENT_RESUMED = 1       // ACTIVITY_RESUMED
+              private const val EVENT_PAUSED = 2        // ACTIVITY_PAUSED
+              private const val EVENT_SCREEN_OFF = 16   // SCREEN_NON_INTERACTIVE
+
+              private var cachedAt = 0L
+              private var cachedValue: Long? = null
+
+              fun hasPermission(ctx: Context): Boolean {
+                  val ops = ctx.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+                  val mode = if (Build.VERSION.SDK_INT >= 29) {
+                      ops.unsafeCheckOpNoThrow(
+                          AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), ctx.packageName
+                      )
+                  } else {
+                      @Suppress("DEPRECATION")
+                      ops.checkOpNoThrow(
+                          AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), ctx.packageName
+                      )
+                  }
+                  return mode == AppOpsManager.MODE_ALLOWED
+              }
+
+              /** Milliseconds of screen time since local midnight, or null if no permission. */
+              fun todayMs(ctx: Context): Long? {
+                  val now = System.currentTimeMillis()
+                  if (now - cachedAt < 30_000L && cachedAt != 0L) return cachedValue
+                  cachedAt = now
+                  cachedValue = if (hasPermission(ctx)) compute(ctx, now) else null
+                  return cachedValue
+              }
+
+              private fun compute(ctx: Context, now: Long): Long {
+                  val cal = Calendar.getInstance().apply {
+                      set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+                      set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+                  }
+                  val start = cal.timeInMillis
+
+                  // Apps that should not count as "screen time": this app and the home launcher.
+                  val skip = HashSet<String>()
+                  skip.add(ctx.packageName)
+                  skip.add("com.android.systemui")
+                  val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+                  ctx.packageManager.queryIntentActivities(home, 0).forEach {
+                      skip.add(it.activityInfo.packageName)
+                  }
+
+                  val usm = ctx.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+                  val events = usm.queryEvents(start, now)
+                  val e = UsageEvents.Event()
+                  val open = HashMap<String, Long>() // "pkg/class" -> resume timestamp
+                  var total = 0L
+
+                  while (events.hasNextEvent()) {
+                      events.getNextEvent(e)
+                      val pkg = e.packageName ?: continue
+                      val key = pkg + "/" + (e.className ?: "")
+                      when (e.eventType) {
+                          EVENT_RESUMED -> if (pkg !in skip) open[key] = e.timeStamp
+                          EVENT_PAUSED -> {
+                              val t = open.remove(key)
+                              if (t != null && e.timeStamp > t) total += e.timeStamp - t
+                          }
+                          EVENT_SCREEN_OFF -> {
+                              // Screen turned off: close anything still marked as open.
+                              for (t in open.values) if (e.timeStamp > t) total += e.timeStamp - t
+                              open.clear()
+                          }
+                      }
+                  }
+                  // Whatever is still open is on screen right now.
+                  for (t in open.values) if (now > t) total += now - t
+                  return total
+              }
+          }
+          __END_OF_FILE__
+          mkdir -p app/src/main/java/com/minimal/lock
+          cat > app/src/main/java/com/minimal/lock/MinimalLockService.kt <<'__END_OF_FILE__'
+          package com.minimal.lock
+
+          import android.content.BroadcastReceiver
+          import android.content.Context
+          import android.content.Intent
+          import android.content.IntentFilter
+          import android.graphics.Canvas
+          import android.graphics.Color
+          import android.graphics.Paint
+          import android.graphics.RectF
+          import android.graphics.Typeface
+          import android.os.BatteryManager
+          import android.os.Build
+          import android.os.Handler
+          import android.os.Looper
+          import android.service.wallpaper.WallpaperService
+          import android.view.SurfaceHolder
+          import java.util.Calendar
+          import java.util.Locale
+
+          class MinimalLockService : WallpaperService() {
+
+              override fun onCreateEngine(): Engine = LockEngine()
+
+              inner class LockEngine : Engine() {
+
+                  private val handler = Handler(Looper.getMainLooper())
+                  private var visible = false
+                  private var registered = false
+
+                  private val ticker = object : Runnable {
+                      override fun run() {
+                          draw()
+                          scheduleNextMinute()
+                      }
+                  }
+
+                  // Redraw instantly when battery, time, date or timezone change.
+                  private val receiver = object : BroadcastReceiver() {
+                      override fun onReceive(c: Context, i: Intent) = draw()
+                  }
+
+                  private val white = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+                  private val gray = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#BDBDBD") }
+                  private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+                  private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+                  private val regular: Typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                  private val medium: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+
+                  override fun onVisibilityChanged(isVisible: Boolean) {
+                      visible = isVisible
+                      if (isVisible) {
+                          registerReceivers()
+                          draw()
+                          scheduleNextMinute()
+                      } else {
+                          handler.removeCallbacks(ticker)
+                          unregisterReceivers()
+                      }
+                  }
+
+                  override fun onSurfaceChanged(h: SurfaceHolder, f: Int, w: Int, ht: Int) {
+                      super.onSurfaceChanged(h, f, w, ht)
+                      draw()
+                  }
+
+                  override fun onDestroy() {
+                      handler.removeCallbacks(ticker)
+                      unregisterReceivers()
+                      super.onDestroy()
+                  }
+
+                  private fun registerReceivers() {
+                      if (registered) return
+                      val f = IntentFilter().apply {
+                          addAction(Intent.ACTION_BATTERY_CHANGED)
+                          addAction(Intent.ACTION_TIME_CHANGED)
+                          addAction(Intent.ACTION_TIMEZONE_CHANGED)
+                          addAction(Intent.ACTION_DATE_CHANGED)
+                      }
+                      registerReceiver(receiver, f)
+                      registered = true
+                  }
+
+                  private fun unregisterReceivers() {
+                      if (!registered) return
+                      try { unregisterReceiver(receiver) } catch (e: Exception) {}
+                      registered = false
+                  }
+
+                  /** Fires right after each minute rolls over, so the clock never lags. */
+                  private fun scheduleNextMinute() {
+                      handler.removeCallbacks(ticker)
+                      if (!visible) return
+                      val now = System.currentTimeMillis()
+                      handler.postDelayed(ticker, 60_000L - (now % 60_000L) + 100L)
+                  }
+
+                  // ---------------------------------------------------------------- drawing
+
+                  private fun draw() {
+                      val holder = surfaceHolder ?: return
+                      var canvas: Canvas? = null
+                      try {
+                          canvas = holder.lockCanvas() ?: return
+                          render(canvas)
+                      } finally {
+                          if (canvas != null) {
+                              try { holder.unlockCanvasAndPost(canvas) } catch (e: Exception) {}
+                          }
+                      }
+                  }
+
+                  private fun text(c: Canvas, s: String, x: Float, y: Float, size: Float,
+                                   p: Paint, align: Paint.Align = Paint.Align.LEFT, tf: Typeface = regular) {
+                      p.textSize = size
+                      p.textAlign = align
+                      p.typeface = tf
+                      c.drawText(s, x, y, p)
+                  }
+
+                  private fun render(c: Canvas) {
+                      // Layout was designed on an 887px wide reference; everything scales from that.
+                      val u = c.width / 887f
+                      c.drawColor(Color.BLACK)
+
+                      val now = Calendar.getInstance()
+                      val ms = now.timeInMillis
+                      val secondsToday = now.get(Calendar.HOUR_OF_DAY) * 3600 +
+                              now.get(Calendar.MINUTE) * 60 + now.get(Calendar.SECOND)
+                      val dayFrac = secondsToday / 86400f
+
+                      // ---- clock + date
+                      val hour12 = now.get(Calendar.HOUR).let { if (it == 0) 12 else it }
+                      val clock = String.format(Locale.US, "%d:%02d %s", hour12,
+                          now.get(Calendar.MINUTE), if (now.get(Calendar.AM_PM) == Calendar.AM) "AM" else "PM")
+                      text(c, clock, 66 * u, 182 * u, 126 * u, white)
+
+                      val dayName = now.getDisplayName(Calendar.DAY_OF_WEEK, Calendar.LONG, Locale.ENGLISH)
+                      val monthName = now.getDisplayName(Calendar.MONTH, Calendar.LONG, Locale.ENGLISH)
+                      val d = now.get(Calendar.DAY_OF_MONTH)
+                      text(c, "$dayName, ${d}${ordinal(d)} $monthName", 70 * u, 248 * u, 40 * u, white)
+
+                      // ---- year progress
+                      val daysInYear = now.getActualMaximum(Calendar.DAY_OF_YEAR)
+                      val yearFrac = ((now.get(Calendar.DAY_OF_YEAR) - 1) + dayFrac) / daysInYear
+                      val yearPct = (yearFrac * 100).toInt()
+                      text(c, "Year in progress $yearPct%", 73 * u, 355 * u, 33 * u, gray)
+
+                      val bx = 73 * u; val by = 372 * u; val bw = 507 * u; val bh = 35 * u
+                      fill.color = Color.parseColor("#D0D0D0")
+                      c.drawRect(bx, by, bx + bw * yearFrac, by + bh, fill)
+                      fill.color = Color.parseColor("#6E6E6E")
+                      val step = 5 * u
+                      val r = 1.0f * u
+                      var gx = bx
